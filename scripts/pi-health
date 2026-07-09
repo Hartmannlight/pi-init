@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+printf 'Hostname: %s\n' "$(hostname)"
+printf 'Node Exporter: %s\n' "$(systemctl is-active prometheus-node-exporter.service 2>/dev/null || true)"
+printf 'Pi-Metrik-Timer: %s\n' "$(systemctl is-active pi-prometheus-metrics.timer 2>/dev/null || true)"
+printf 'Port 9100:\n'
+ss -ltn | awk 'NR == 1 || $4 ~ /:9100$/'
+printf '\nPi-Metriken:\n'
+if command -v curl >/dev/null 2>&1; then
+  curl -fsS http://127.0.0.1:9100/metrics | grep '^pi_' || true
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO- http://127.0.0.1:9100/metrics | grep '^pi_' || true
+else
+  printf 'curl oder wget wird für die Abfrage benötigt.\n' >&2
+  exit 1
+fi
