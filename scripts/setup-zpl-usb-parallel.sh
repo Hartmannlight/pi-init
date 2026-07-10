@@ -14,15 +14,25 @@ warn() { printf 'WARNUNG: %s\n' "$*" >&2; }
 info() { printf '[*] %s\n' "$*"; }
 ask() { local a; read -r -p "$1" a; printf '%s' "$a"; }
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != . && "$1" != .. ]]; }
-backup() { [[ -e "$1" ]] && cp -a -- "$1" "$1.zpl-backup-$STAMP"; }
+backup() {
+  if [[ -e "$1" ]]; then
+    cp -a -- "$1" "$1.zpl-backup-$STAMP"
+    info "Bestehende Datei gesichert: $1.zpl-backup-$STAMP"
+  fi
+}
+
+trap 'die "Unerwarteter Fehler in Zeile $LINENO: $BASH_COMMAND"' ERR
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Mit sudo ausführen: sudo $0"
 for cmd in readlink modprobe udevadm getent flock; do command -v "$cmd" >/dev/null || die "Benötigtes Kommando fehlt: $cmd"; done
 
+info "Richte USB-zu-Parallel-ZPL-Adapter ein."
+info "Suche angeschlossene Adapter (das Kernel-Modul usblp wird geladen)."
 mkdir -p /etc/modules-load.d
 if [[ ! -f "$MODULE_FILE" ]] || ! grep -Fxq usblp "$MODULE_FILE"; then
   backup "$MODULE_FILE"
   printf '# Managed by setup-zpl-usb-parallel.sh\nusblp\n' >"$MODULE_FILE"
+  info "Autostart für Kernel-Modul usblp eingerichtet."
 fi
 if ! modprobe usblp; then warn "usblp konnte nicht geladen werden; prüfe Blacklists oder Kernel-Unterstützung."; fi
 udevadm settle || true
@@ -37,12 +47,14 @@ for cls in /sys/class/usbmisc/lp*; do
   i="${#DEV[@]}"; DEV[i]="$dev"; USB[i]="$parent"; VID[i]="$(attr "$parent/idVendor")"; PID[i]="$(attr "$parent/idProduct")"; SERIAL[i]="$(attr "$parent/serial")"; MFR[i]="$(attr "$parent/manufacturer")"; PRODUCT[i]="$(attr "$parent/product")"
 done
 shopt -u nullglob
-((${#DEV[@]})) || die "Keine /dev/usb/lp*-Geräte gefunden. Prüfe: dmesg | grep -i usblp"
+((${#DEV[@]})) || die "Keine /dev/usb/lp*-Geräte gefunden. Adapter anschließen und prüfen: dmesg | grep -i usblp"
 
 printf '\nGefundene Adapter:\n'
 for i in "${!DEV[@]}"; do printf '  %d) %s  %s:%s  %s %s  Seriennr.: %s\n' "$((i+1))" "${DEV[i]}" "${VID[i]}" "${PID[i]}" "${MFR[i]:-unbekannt}" "${PRODUCT[i]:-unbekannt}" "${SERIAL[i]:-(keine)}"; done
+printf '\n'
 while true; do choice="$(ask 'Adapter-Nummer: ')"; [[ "$choice" =~ ^[0-9]+$ ]] && ((choice>=1 && choice<=${#DEV[@]})) && { i=$((choice-1)); break; }; done
 while true; do name="$(ask 'Stabiler Name (z.B. zebra1): ')"; valid_name "$name" && break; printf 'Erlaubt: Buchstaben, Ziffern, Punkt, Unterstrich, Minus.\n'; done
+info "Adapter ${DEV[i]} wird als /dev/$LINK_ROOT/$name eingerichtet."
 
 same_vidpid=0; same_serial=0
 for n in "${!DEV[@]}"; do [[ "${VID[n]}:${PID[n]}" == "${VID[i]}:${PID[i]}" ]] && ((++same_vidpid)); [[ -n "${SERIAL[i]}" && "${VID[n]}:${PID[n]}:${SERIAL[n]}" == "${VID[i]}:${PID[i]}:${SERIAL[i]}" ]] && ((++same_serial)); done
@@ -67,6 +79,7 @@ rule+=", SYMLINK+=\"$LINK_ROOT/$name\", GROUP=\"$GROUP_NAME\", MODE=\"0660\""
 rule_file="$RULES_DIR/70-zpl-usb-parallel-$name.rules"
 backup "$rule_file"
 printf '# Managed by setup-zpl-usb-parallel.sh\n# Match mode: %s\n%s\n' "$mode" "$rule" >"$rule_file"
+info "Udev-Regel geschrieben: $rule_file"
 
 cat >"$SENDER" <<'EOF'
 #!/usr/bin/env bash
