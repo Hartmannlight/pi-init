@@ -117,6 +117,41 @@ while true; do
   printf 'Erlaubt sind Buchstaben, Ziffern, Punkt, Unterstrich und Minus.\n'
 done
 
+declare -a EXISTING_NAMES
+EXISTING_NAMES=()
+shopt -s nullglob
+for existing_rule in "$RULES_DIR"/70-zpl-usb-parallel-*.rules; do
+  if grep -Fq "ATTRS{idVendor}==\"${VID[selected]}\"" "$existing_rule" && \
+    grep -Fq "ATTRS{idProduct}==\"${PID[selected]}\"" "$existing_rule"; then
+    existing_name="${existing_rule##*/70-zpl-usb-parallel-}"
+    EXISTING_NAMES+=("${existing_name%.rules}")
+  fi
+done
+shopt -u nullglob
+
+if ((${#EXISTING_NAMES[@]})); then
+  printf '\nBereits eingerichtete Namen für diesen Adaptertyp:\n'
+  for existing_name in "${EXISTING_NAMES[@]}"; do
+    printf '  - %s\n' "$existing_name"
+  done
+  replacement_default=""
+  if ((${#EXISTING_NAMES[@]} == 1)); then
+    replacement_default="${EXISTING_NAMES[0]}"
+  fi
+  replacement="$(ask "Bisherigen Namen ersetzen [${replacement_default:-leer = behalten}]: ")"
+  replacement="${replacement:-$replacement_default}"
+  if [[ -n "$replacement" ]]; then
+    valid_name "$replacement" || die "Ungültiger bisheriger Name: $replacement"
+    old_rule="$RULES_DIR/70-zpl-usb-parallel-$replacement.rules"
+    [[ -f "$old_rule" ]] || die "Keine verwaltete Regel für $replacement gefunden: $old_rule"
+    if [[ "$replacement" != "$name" ]]; then
+      backup "$old_rule"
+      rm -f -- "$old_rule"
+      info "Bisherige Zuordnung $replacement deaktiviert; sie wird durch $name ersetzt."
+    fi
+  fi
+fi
+
 same_vid_pid=0
 same_serial=0
 for index in "${!DEVICE[@]}"; do
