@@ -121,8 +121,9 @@ sudo ~/scripts/setup-zpl-usb-parallel.sh
 Es lädt `usblp`, erkennt angeschlossene `/dev/usb/lp*`-Adapter und erzeugt eine
 udev-Regel mit einer eindeutigen Seriennummer, wenn vorhanden. Bei Adaptern ohne
 Seriennummer ist ein VID:PID-Match nur sicher, solange kein baugleicher Adapter
-angeschlossen ist; bei mehreren identischen Adaptern bietet das Skript bewusst
-nur die portgebundene Notlösung an. Es installiert außerdem `zpl-send`, das
+angeschlossen ist; bei mehreren identischen Adaptern bricht das Skript bewusst
+ab, statt eine beim Portwechsel falsche Zuordnung einzurichten. Es richtet die
+Gruppe `zplraw`, einen `/run`-basierten Sperrpfad und `zpl-send` ein, das
 gleichzeitige Raw-ZPL-Schreibzugriffe per `flock` serialisiert.
 
 ## Idempotenz und Sicherungen
