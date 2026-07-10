@@ -6,6 +6,7 @@ REF="${PI_INIT_REF:-main}"
 TARGET_USER="${USER:-$(id -un)}"
 TARGET_HOME="${HOME:?HOME ist nicht gesetzt}"
 SCRIPTS_DIR="${TARGET_HOME}/scripts"
+SCRIPTS_ONLY="${PI_INIT_SCRIPTS_ONLY:-0}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 TMP_DIR=""
 
@@ -67,6 +68,10 @@ if [[ -d "$SOURCE_DIR/scripts" ]]; then
 fi
 
 printf 'Skripte wurden für %s nach %s kopiert.\n' "$TARGET_USER" "$SCRIPTS_DIR"
+if [[ "$SCRIPTS_ONLY" == 1 ]]; then
+  printf 'Nur-Skripte-Modus: Die interaktive Pi-Initialisierung wird nicht gestartet.\n'
+  exit 0
+fi
 printf 'Starte nun die interaktive Einrichtung mit sudo ...\n'
 [[ -r /dev/tty ]] || fail "Kein interaktives Terminal gefunden. Bitte sudo '$SCRIPTS_DIR/pi-init.sh' ausführen."
 if [[ -n "${PI_INIT_PUBLIC_KEY:-}" ]]; then

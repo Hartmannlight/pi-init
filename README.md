@@ -34,6 +34,13 @@ Vorhandene, abweichende Dateien in `~/scripts` werden vor dem Überschreiben mit
 einem Zeitstempel gesichert. Das Init-Skript selbst verweigert die Ausführung
 ohne Root-Rechte.
 
+Um später ausschließlich die Hilfsskripte in `~/scripts` zu aktualisieren,
+ohne die Pi-Initialisierung erneut zu starten:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hartmannlight/pi-init/main/bootstrap.sh | PI_INIT_SCRIPTS_ONLY=1 bash
+```
+
 Der für dieses Homelab vorgesehene öffentliche SSH-Schlüssel ist im Repository
 hinterlegt. Er wird idempotent für den Benutzer ergänzt; die Passwort-Anmeldung
 bleibt aktiv. Ein abweichender Schlüssel kann bei Bedarf einmalig mit
@@ -121,9 +128,14 @@ sudo ~/scripts/setup-zpl-usb-parallel.sh
 Es lädt `usblp`, erkennt angeschlossene `/dev/usb/lp*`-Adapter und erzeugt eine
 udev-Regel mit einer eindeutigen Seriennummer, wenn vorhanden. Bei Adaptern ohne
 Seriennummer ist ein VID:PID-Match nur sicher, solange kein baugleicher Adapter
-angeschlossen ist; bei mehreren identischen Adaptern bietet das Skript bewusst
-nur die portgebundene Notlösung an. Es installiert außerdem `zpl-send`, das
+angeschlossen ist; bei mehreren identischen Adaptern bricht das Skript bewusst
+ab, statt eine beim Portwechsel falsche Zuordnung einzurichten. Es richtet die
+Gruppe `zplraw`, einen `/run`-basierten Sperrpfad und `zpl-send` ein, das
 gleichzeitige Raw-ZPL-Schreibzugriffe per `flock` serialisiert.
+
+Wenn bereits eine frühere Zuordnung für denselben Adaptertyp vorhanden ist,
+zeigt das Script deren Namen und kann sie beim Vergeben eines neuen Namens
+sichern und durch die neue Regel ersetzen.
 
 ## Idempotenz und Sicherungen
 
