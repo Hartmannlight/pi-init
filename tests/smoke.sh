@@ -6,6 +6,7 @@ bash -n "$ROOT/bootstrap.sh"
 bash -n "$ROOT/init.sh"
 bash -n "$ROOT/scripts/pi-health"
 bash -n "$ROOT/scripts/setup-zpl-usb-parallel.sh"
+bash -n "$ROOT/tests/metrics.sh"
 metrics_script="$(mktemp)"
 trap 'rm -f -- "$metrics_script"' EXIT
 awk '
@@ -22,4 +23,5 @@ grep -Fq 'pi_zpl_agent_scrape_success' "$ROOT/init.sh"
 grep -Fq 'zpl-agent.prom' "$ROOT/init.sh"
 grep -Fq -- '--monitoring-only' "$ROOT/init.sh"
 grep -Fq 'file_sd_configs' "$ROOT/init.sh"
+bash "$ROOT/tests/metrics.sh"
 printf 'Smoke tests erfolgreich.\n'
