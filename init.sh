@@ -20,6 +20,7 @@ TARGET_USER=""
 TARGET_HOME=""
 NEW_HOSTNAME=""
 FAILURE_REPORTED=0
+MONITORING_ONLY=0
 declare -a SUMMARY_OK=()
 declare -a SUMMARY_WARN=()
 declare -a TODO=()
@@ -27,6 +28,13 @@ declare -a TODO=()
 plain_error() {
   printf 'FEHLER: %s\n' "$*" >&2
 }
+
+case "${1:-}" in
+  "") ;;
+  --monitoring-only) MONITORING_ONLY=1 ;;
+  *) plain_error "Unbekannte Option: $1"; exit 2 ;;
+esac
+[[ "$#" -le 1 ]] || { plain_error "Es ist höchstens eine Option erlaubt."; exit 2; }
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   plain_error "Dieses Init-Skript darf nur mit sudo ausgeführt werden: sudo $0"
@@ -196,6 +204,14 @@ install_packages() {
   apt-get install -y unattended-upgrades prometheus-node-exporter "${SELECTED_PACKAGES[@]}"
   SUMMARY_OK+=("apt update/upgrade abgeschlossen")
   SUMMARY_OK+=("Pakete installiert: ${SELECTED_PACKAGES[*]:-(keine optionalen)}")
+}
+
+install_monitoring_packages() {
+  section "Monitoring-Pakete installieren oder aktualisieren"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y prometheus-node-exporter ca-certificates
+  SUMMARY_OK+=("Monitoring-Pakete sind installiert")
 }
 
 configure_unattended_upgrades() {
@@ -388,6 +404,16 @@ configure_service_metrics() {
   install_if_changed "$tmp" /etc/pi-init/monitor-services.conf 0644
 }
 
+preserve_service_metrics_config() {
+  install -d -m 0755 /etc/pi-init
+  if [[ ! -e /etc/pi-init/monitor-services.conf ]]; then
+    install -m 0644 /dev/null /etc/pi-init/monitor-services.conf
+    printf 'Neu angelegt: /etc/pi-init/monitor-services.conf\n'
+  else
+    printf 'Unverändert: /etc/pi-init/monitor-services.conf\n'
+  fi
+}
+
 configure_node_exporter() {
   section "Node Exporter und Pi-Metriken"
   local defaults_tmp metrics_tmp service_tmp timer_tmp tmpfiles_tmp args current
@@ -432,10 +458,13 @@ set -Eeuo pipefail
 
 OUTPUT_DIR="/run/node-exporter-textfile"
 OUTPUT_FILE="$OUTPUT_DIR/pi.prom"
+ZPL_OUTPUT_FILE="$OUTPUT_DIR/zpl-agent.prom"
+ZPL_ENDPOINT="http://127.0.0.1:8080/metrics"
 SERVICE_FILE="/etc/pi-init/monitor-services.conf"
 install -d -m 0755 "$OUTPUT_DIR"
 TMP_FILE="$(mktemp "$OUTPUT_DIR/.pi.prom.XXXXXX")"
-trap 'rm -f -- "$TMP_FILE"' EXIT
+ZPL_TMP_FILE="$(mktemp "$OUTPUT_DIR/.zpl-agent.prom.XXXXXX")"
+trap 'rm -f -- "$TMP_FILE" "$ZPL_TMP_FILE"' EXIT
 
 metric_bool() {
   printf '%s %d\n' "$1" "$2" >>"$TMP_FILE"
@@ -443,6 +472,16 @@ metric_bool() {
 
 escape_label() {
   sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' <<<"$1" | tr -d '\n' | sed 's/\\n$//'
+}
+
+fetch_zpl_metrics() {
+  if command -v curl >/dev/null 2>&1; then
+    curl --connect-timeout 1 --max-time 5 -fsS "$ZPL_ENDPOINT"
+  elif command -v wget >/dev/null 2>&1; then
+    wget --timeout=5 --tries=1 -qO- "$ZPL_ENDPOINT"
+  else
+    return 1
+  fi
 }
 
 if [[ -r /sys/class/thermal/thermal_zone0/temp ]]; then
@@ -488,8 +527,29 @@ if [[ -r "$SERVICE_FILE" ]]; then
   done <"$SERVICE_FILE"
 fi
 
+printf '# HELP pi_zpl_agent_configured Whether ZebraTamer zpl-agent is installed on this host.\n# TYPE pi_zpl_agent_configured gauge\n' >>"$TMP_FILE"
+printf '# HELP pi_zpl_agent_scrape_success Whether the latest local ZebraTamer metrics collection succeeded.\n# TYPE pi_zpl_agent_scrape_success gauge\n' >>"$TMP_FILE"
+zpl_configured=0
+zpl_scrape_success=0
+if [[ -x /usr/local/bin/zpl-agent ]] || systemctl cat zpl-agent.service >/dev/null 2>&1; then
+  zpl_configured=1
+  if fetch_zpl_metrics >"$ZPL_TMP_FILE" && grep -q '^zpl_agent_build_info' "$ZPL_TMP_FILE"; then
+    chmod 0644 "$ZPL_TMP_FILE"
+    mv -f -- "$ZPL_TMP_FILE" "$ZPL_OUTPUT_FILE"
+    zpl_scrape_success=1
+    printf '# HELP pi_zpl_agent_metrics_last_success_unixtime Unix time of the latest successful local ZebraTamer metrics collection.\n# TYPE pi_zpl_agent_metrics_last_success_unixtime gauge\npi_zpl_agent_metrics_last_success_unixtime %s\n' "$(date +%s)" >>"$TMP_FILE"
+  else
+    rm -f -- "$ZPL_OUTPUT_FILE"
+  fi
+else
+  rm -f -- "$ZPL_OUTPUT_FILE"
+fi
+metric_bool pi_zpl_agent_configured "$zpl_configured"
+metric_bool pi_zpl_agent_scrape_success "$zpl_scrape_success"
+
 chmod 0644 "$TMP_FILE"
 mv -f -- "$TMP_FILE" "$OUTPUT_FILE"
+rm -f -- "$ZPL_TMP_FILE"
 trap - EXIT
 METRICS
   install_if_changed "$metrics_tmp" /usr/local/sbin/pi-prometheus-metrics 0755
@@ -586,6 +646,21 @@ validate_monitoring() {
   fi
 }
 
+print_prometheus_target() {
+  local host ip
+  host="${NEW_HOSTNAME:-$(hostnamectl --static 2>/dev/null || hostname)}"
+  ip="${STATIC_IP:-}"
+  if [[ -z "$ip" ]]; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}')"
+  fi
+  ip="${ip:-PI_IP_EINTRAGEN}"
+  printf '\n===== Zentralen Prometheus-Target anlegen =====\n'
+  printf 'Auf dem Prometheus-Server diese Datei anlegen:\n'
+  printf '/etc/prometheus/targets/raspberry-pi/%s.json\n\n' "$host"
+  printf '[\n  {\n    "targets": ["%s:9100"],\n    "labels": {\n      "host": "%s",\n      "location": "unknown",\n      "role": "raspberry-pi"\n    }\n  }\n]\n' "$ip" "$host"
+  printf '\nDer zentrale Prometheus benötigt einmalig file_sd_configs für /etc/prometheus/targets/raspberry-pi/*.json.\n'
+}
+
 print_summary() {
   section "Zusammenfassung"
   local item mac reservation_host
@@ -604,12 +679,25 @@ print_summary() {
     printf '\nKeine manuellen Restarbeiten erkannt.\n'
   fi
   printf '\nLogdatei: %s\n' "$LOG_FILE"
+  print_prometheus_target
 }
 
 main() {
   printf 'pi-init gestartet: %s\n' "$(date --iso-8601=seconds)"
   detect_platform
   detect_target_user
+  if [[ "$MONITORING_ONLY" -eq 1 ]]; then
+    install_monitoring_packages
+    preserve_service_metrics_config
+    configure_node_exporter
+    configure_firewall
+    validate_monitoring
+    printf '\n===== Zusammenfassung =====\n'
+    printf 'OK: Monitoring wurde nichtinteraktiv aktualisiert.\n'
+    print_prometheus_target
+    printf '\nLogdatei: %s\n' "$LOG_FILE"
+    return
+  fi
   configure_hostname
   select_packages
   install_packages

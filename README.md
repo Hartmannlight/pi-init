@@ -41,6 +41,21 @@ ohne die Pi-Initialisierung erneut zu starten:
 curl -fsSL https://raw.githubusercontent.com/Hartmannlight/pi-init/main/bootstrap.sh | PI_INIT_SCRIPTS_ONLY=1 bash
 ```
 
+Um auf einem bereits eingerichteten Pi ausschließlich das Monitoring
+nichtinteraktiv zu aktualisieren, genügt ein einzelner Aufruf als normaler
+Benutzer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hartmannlight/pi-init/main/bootstrap.sh | PI_INIT_MONITORING_ONLY=1 bash
+```
+
+Der Aufruf aktualisiert die Skripte, Node Exporter, Textfile Collector und
+Pi-Metriken. Eine vorhandene Liste überwachter systemd-Units bleibt erhalten.
+Ist ZebraTamer installiert, werden dessen lokal gebundene Metriken zusätzlich
+nach `zpl-agent.prom` übernommen und über denselben Node-Exporter-Port `9100`
+bereitgestellt. Auf Pis ohne ZebraTamer wird keine Zebra-Datei erzeugt und das
+Monitoring funktioniert unverändert weiter.
+
 Der für dieses Homelab vorgesehene öffentliche SSH-Schlüssel ist im Repository
 hinterlegt. Er wird idempotent für den Benutzer ergänzt; die Passwort-Anmeldung
 bleibt aktiv. Ein abweichender Schlüssel kann bei Bedarf einmalig mit
@@ -97,6 +112,12 @@ NTP-Synchronisation sowie optional ausgewählte systemd-Dienste. Falls
 `vcgencmd` auf einer unterstützten Installation fehlt, bleiben die übrigen
 Metriken verfügbar und `pi_vcgencmd_available` zeigt den Zustand an.
 
+Zusätzlich melden `pi_zpl_agent_configured` und
+`pi_zpl_agent_scrape_success`, ob ZebraTamer installiert ist und seine lokale
+Metrikabfrage erfolgreich war. Erfolgreich abgefragte `zpl_*`-Metriken werden
+aus `/run/node-exporter-textfile/zpl-agent.prom` ausgeliefert. Die
+ZebraTamer-Druck-API kann dadurch sicher an `127.0.0.1` gebunden bleiben.
+
 Prometheus, Grafana, Alertmanager und Blackbox Exporter werden ausdrücklich
 nicht installiert. Auf dem zentralen Prometheus-Server genügt beispielsweise:
 
@@ -106,6 +127,26 @@ scrape_configs:
     static_configs:
       - targets: ['192.168.0.102:9100']
 ```
+
+Für mehrere Pis empfiehlt sich File Service Discovery:
+
+```yaml
+scrape_configs:
+  - job_name: raspberry-pi
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/raspberry-pi/*.json
+```
+
+Am Ende jeder vollständigen oder reinen Monitoring-Einrichtung gibt `pi-init`
+den exakten Dateinamen und JSON-Inhalt für den aktuellen Pi aus. Die Datei muss
+nur noch auf dem zentralen Prometheus-Server angelegt werden; eine automatische
+Registrierung erfolgt bewusst nicht.
+
+Ein importierbares Flotten-Dashboard liegt unter
+[`grafana/raspberry-pi-fleet.json`](grafana/raspberry-pi-fleet.json). Es zeigt
+alle registrierten Pis gemeinsam und bietet zusätzlich eine dynamische
+Hostauswahl; neue Pis benötigen kein eigenes Dashboard.
 
 ## Weitere Skripte
 

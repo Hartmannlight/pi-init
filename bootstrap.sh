@@ -7,6 +7,7 @@ TARGET_USER="${USER:-$(id -un)}"
 TARGET_HOME="${HOME:?HOME ist nicht gesetzt}"
 SCRIPTS_DIR="${TARGET_HOME}/scripts"
 SCRIPTS_ONLY="${PI_INIT_SCRIPTS_ONLY:-0}"
+MONITORING_ONLY="${PI_INIT_MONITORING_ONLY:-0}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 TMP_DIR=""
 
@@ -68,8 +69,17 @@ if [[ -d "$SOURCE_DIR/scripts" ]]; then
 fi
 
 printf 'Skripte wurden für %s nach %s kopiert.\n' "$TARGET_USER" "$SCRIPTS_DIR"
+if [[ "$SCRIPTS_ONLY" == 1 && "$MONITORING_ONLY" == 1 ]]; then
+  fail "PI_INIT_SCRIPTS_ONLY und PI_INIT_MONITORING_ONLY dürfen nicht gleichzeitig gesetzt sein."
+fi
 if [[ "$SCRIPTS_ONLY" == 1 ]]; then
   printf 'Nur-Skripte-Modus: Die interaktive Pi-Initialisierung wird nicht gestartet.\n'
+  exit 0
+fi
+if [[ "$MONITORING_ONLY" == 1 ]]; then
+  printf 'Aktualisiere ausschließlich Node Exporter, Pi- und optionale ZebraTamer-Metriken ...\n'
+  [[ -r /dev/tty ]] || fail "Kein interaktives Terminal für sudo gefunden."
+  sudo bash "$SCRIPTS_DIR/pi-init.sh" --monitoring-only </dev/tty
   exit 0
 fi
 printf 'Starte nun die interaktive Einrichtung mit sudo ...\n'
